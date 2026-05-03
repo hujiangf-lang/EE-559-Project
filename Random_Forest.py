@@ -218,7 +218,7 @@ plt.tight_layout()
 plt.show()
 
 # =========================
-# 10. Feature importance (best for RF report)
+# 10. Feature importance
 # =========================
 feature_names = X.columns
 importances = model_base.feature_importances_
