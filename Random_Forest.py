@@ -16,7 +16,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-
+from sklearn.metrics import log_loss, accuracy_score
 from imblearn.over_sampling import SMOTE
 
 # =========================
@@ -74,6 +74,49 @@ def find_best_threshold(y_true, y_prob):
     return best_threshold, best_f1
 
 
+def train_rf_with_curve(X_train, y_train, X_val, y_val, n_trees_list=None):
+    """
+    Train Random Forest incrementally with warm_start and record
+    training/validation loss and accuracy curves.
+    """
+    if n_trees_list is None:
+        n_trees_list = list(range(10, 210, 10))  # 10, 20, ..., 200
+
+    model = RandomForestClassifier(
+        n_estimators=1,
+        warm_start=True,
+        random_state=42,
+        n_jobs=-1
+    )
+
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+
+    for n_trees in n_trees_list:
+        model.set_params(n_estimators=n_trees)
+        model.fit(X_train, y_train)
+
+        y_train_prob = model.predict_proba(X_train)[:, 1]
+        y_val_prob = model.predict_proba(X_val)[:, 1]
+
+        y_train_pred = (y_train_prob >= 0.5).astype(int)
+        y_val_pred = (y_val_prob >= 0.5).astype(int)
+
+        train_losses.append(log_loss(y_train, y_train_prob, labels=[0, 1]))
+        val_losses.append(log_loss(y_val, y_val_prob, labels=[0, 1]))
+        train_accs.append(accuracy_score(y_train, y_train_pred))
+        val_accs.append(accuracy_score(y_val, y_val_pred))
+
+        print(
+            f"Trees {n_trees:03d}: "
+            f"train loss={train_losses[-1]:.4f}, val loss={val_losses[-1]:.4f}, "
+            f"train acc={train_accs[-1]:.4f}, val acc={val_accs[-1]:.4f}"
+        )
+
+    return model, n_trees_list, train_losses, val_losses, train_accs, val_accs
+
 def evaluate_model(name, model, X_val, y_val, X_test, y_test):
     """Tune threshold on validation set, then evaluate on test set."""
     # Validation probabilities
@@ -121,12 +164,9 @@ def evaluate_model(name, model, X_val, y_val, X_test, y_test):
 results = []
 
 # -------- 1. Baseline --------
-model_base = RandomForestClassifier(
-    n_estimators=200,
-    random_state=42,
-    n_jobs=-1
+model_base, rf_tree_list, rf_train_losses, rf_val_losses, rf_train_accs, rf_val_accs = train_rf_with_curve(
+    X_train, y_train, X_val, y_val
 )
-model_base.fit(X_train, y_train)
 results.append(evaluate_model("Baseline RF", model_base, X_val, y_val, X_test, y_test))
 
 # -------- 2. Class Weight --------
@@ -237,4 +277,31 @@ plt.barh(top_k["Feature"], top_k["Importance"])
 plt.xlabel("Importance")
 plt.title("Top 15 Feature Importances (Baseline RF)")
 plt.grid(True, axis="x", alpha=0.3)
+plt.show()
+
+# =========================
+# Plot RF training + accuracy
+# =========================
+plt.figure(figsize=(6, 8))
+
+# -------- up: Loss --------
+plt.subplot(2, 1, 1)
+plt.plot(rf_tree_list, rf_train_losses, label="Training Loss")
+plt.plot(rf_tree_list, rf_val_losses, label="Validation Loss")
+plt.ylabel("Log Loss")
+plt.title("Random Forest Training Curve")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+# -------- down: Accuracy --------
+plt.subplot(2, 1, 2)
+plt.plot(rf_tree_list, rf_train_accs, label="Training Accuracy")
+plt.plot(rf_tree_list, rf_val_accs, label="Validation Accuracy")
+plt.xlabel("Number of Trees")
+plt.ylabel("Accuracy")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("rf_training_curve.png", dpi=300)  # 给LaTeX用
 plt.show()

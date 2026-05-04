@@ -18,6 +18,12 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from sklearn.linear_model import SGDClassifier
+from sklearn.metrics import hinge_loss, accuracy_score
+from sklearn.exceptions import ConvergenceWarning
+import warnings
+
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 from imblearn.over_sampling import SMOTE
 
@@ -86,6 +92,49 @@ def find_best_threshold(y_true, y_score):
     return best_threshold, best_f1
 
 
+def train_svm_with_curve(X_train, y_train, X_val, y_val, epochs=30):
+    """
+    Train a linear SVM-style model using SGDClassifier(loss='hinge')
+    and record training/validation loss and accuracy curves.
+    """
+    model = SGDClassifier(
+        loss="hinge",
+        alpha=1e-4,
+        max_iter=1,
+        tol=None,
+        warm_start=True,
+        random_state=42
+    )
+
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+
+    classes = np.array([0, 1])
+
+    for epoch in range(epochs):
+        model.partial_fit(X_train, y_train, classes=classes)
+
+        y_train_score = model.decision_function(X_train)
+        y_val_score = model.decision_function(X_val)
+
+        train_pred = (y_train_score >= 0).astype(int)
+        val_pred = (y_val_score >= 0).astype(int)
+
+        train_losses.append(hinge_loss(y_train, y_train_score))
+        val_losses.append(hinge_loss(y_val, y_val_score))
+        train_accs.append(accuracy_score(y_train, train_pred))
+        val_accs.append(accuracy_score(y_val, val_pred))
+
+        print(
+            f"Epoch {epoch + 1:02d}: "
+            f"train loss={train_losses[-1]:.4f}, val loss={val_losses[-1]:.4f}, "
+            f"train acc={train_accs[-1]:.4f}, val acc={val_accs[-1]:.4f}"
+        )
+
+    return model, train_losses, val_losses, train_accs, val_accs
+
 def evaluate_model(name, model, X_val, y_val, X_test, y_test):
     """Tune threshold on validation set, then evaluate on test set."""
     # Validation decision scores
@@ -135,8 +184,9 @@ results = []
 
 # -------- 1. Baseline --------
 # Standard linear SVM without imbalance handling
-model_base = LinearSVC(max_iter=10000, random_state=42)
-model_base.fit(X_train, y_train)
+model_base, base_train_losses, base_val_losses, base_train_accs, base_val_accs = train_svm_with_curve(
+    X_train, y_train, X_val, y_val, epochs=30
+)
 results.append(evaluate_model("Baseline SVM", model_base, X_val, y_val, X_test, y_test))
 
 # -------- 2. Class Weight --------
@@ -217,4 +267,33 @@ for ax, r in zip(axes, results):
     ax.set_title(r["name"])
 
 plt.tight_layout()
+plt.show()
+
+# =========================
+# Plot SVM training + accuracy
+# =========================
+epochs = range(1, len(base_train_losses) + 1)
+
+plt.figure(figsize=(6, 8))
+
+# -------- up: Loss --------
+plt.subplot(2, 1, 1)
+plt.plot(epochs, base_train_losses, label="Training Loss")
+plt.plot(epochs, base_val_losses, label="Validation Loss")
+plt.ylabel("Hinge Loss")
+plt.title("SVM Training Curve")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+# -------- down: Accuracy --------
+plt.subplot(2, 1, 2)
+plt.plot(epochs, base_train_accs, label="Training Accuracy")
+plt.plot(epochs, base_val_accs, label="Validation Accuracy")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("svm_training_curve.png", dpi=300)  # 给LaTeX用
 plt.show()
